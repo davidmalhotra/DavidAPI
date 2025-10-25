@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 def health_check():
     """Check if the API is responding"""
     try:
-        port = os.environ.get('PORT', '10000')  # Get the same port
+        port = os.environ.get('PORT', '10000')  # ← USE SAME PORT
         response = requests.get(f'http://localhost:{port}/health', timeout=10)
         return response.status_code == 200
     except:
@@ -16,9 +16,11 @@ def health_check():
 def run_flask_app():
     """Run the Flask application"""
     try:
+        # Pass the PORT environment variable to the subprocess
+        env = os.environ.copy()
         process = subprocess.Popen([
             'python', 'davidapi.py'
-        ])
+        ], env=env)
         return process
     except Exception as e:
         print(f"Error starting Flask app: {e}")
