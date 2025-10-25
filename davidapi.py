@@ -559,6 +559,7 @@ if __name__ == '__main__':
     else:
         print("⚠️ Failed to initialize account manager - will retry on first request")
     
-    # Get port from environment variable (for Render)
+    # Get port from environment variable (for Render) - THIS IS CRITICAL
     port = int(os.environ.get('PORT', 10000))
+    print(f"🚀 Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
