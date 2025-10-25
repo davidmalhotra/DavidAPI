@@ -498,6 +498,9 @@ def process_card(account_manager, cc, mes, ano, cvv):
 # Global account manager instance
 account_manager = None
 
+# Start keep-alive server
+keep_alive()
+
 @app.route('/davidapi.py', methods=['GET', 'POST'])
 def api_check_card():
     global account_manager
