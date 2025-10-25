@@ -7,7 +7,6 @@ import urllib3
 import warnings
 import os
 from flask import Flask, request, jsonify
-from keep_alive import keep_alive
 from urllib3.exceptions import InsecureRequestWarning
 
 # Disable all SSL warnings
@@ -27,6 +26,26 @@ def home():
         'endpoint': 'Use /davidapi.py?cc=card|mm|yy|cvv',
         'status': 'active'
     })
+
+@app.route('/health')
+def health_check():
+    return jsonify({'status': 'API is running'})
+
+# Start keep-alive in background
+def run_keep_alive():
+    """Start a simple server to keep the app alive"""
+    port = int(os.environ.get('PORT', 10000))
+    print(f"✅ Keep-alive server ready on port {port}")
+
+def start_keep_alive():
+    """Start keep-alive in background thread"""
+    t = Thread(target=run_keep_alive)
+    t.daemon = True
+    t.start()
+    print("✅ Keep-alive system activated")
+
+# Start keep-alive immediately
+start_keep_alive()
 
 class AccountManager:
     def __init__(self):
@@ -497,9 +516,6 @@ def process_card(account_manager, cc, mes, ano, cvv):
 
 # Global account manager instance
 account_manager = None
-
-# Start keep-alive server
-keep_alive()
 
 @app.route('/davidapi.py', methods=['GET', 'POST'])
 def api_check_card():
