@@ -5,6 +5,7 @@ import json
 import random
 import urllib3
 import warnings
+import os
 from flask import Flask, request, jsonify
 from urllib3.exceptions import InsecureRequestWarning
 
@@ -16,6 +17,15 @@ warnings.filterwarnings("ignore", category=UserWarning)
 requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
+
+# Add this for Render compatibility
+@app.route('/')
+def home():
+    return jsonify({
+        'message': 'DavidAPI is running!',
+        'endpoint': 'Use /davidapi.py?cc=card|mm|yy|cvv',
+        'status': 'active'
+    })
 
 class AccountManager:
     def __init__(self):
@@ -545,8 +555,10 @@ if __name__ == '__main__':
     # Initialize account manager on startup
     account_manager = setup_account_and_nonce()
     if account_manager:
-        print("Account manager initialized successfully")
+        print("✅ Account manager initialized successfully")
     else:
-        print("Warning: Failed to initialize account manager")
+        print("⚠️ Failed to initialize account manager - will retry on first request")
     
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Get port from environment variable (for Render)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
