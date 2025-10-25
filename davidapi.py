@@ -19,8 +19,14 @@ requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.
 
 app = Flask(__name__)
 
-# Enable CORS for all routes and origins
-CORS(app)
+# PROPER CORS Configuration - Add this
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
 
 # ===== ROUTES =====
 @app.route('/')
@@ -35,16 +41,28 @@ def home():
 def health():
     return jsonify({'status': 'API is running'})
 
-@app.route('/check', methods=['GET', 'POST'])
+@app.route('/check', methods=['GET', 'POST', 'OPTIONS'])
+@cross_origin()  # Add this decorator
 def check_card():
     global account_manager
     
+    # Handle OPTIONS request for CORS preflight
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+    
     try:
-        # Get card data from request
+        # Get card data from request - FIXED CONTENT-TYPE HANDLING
+        card_input = ""
+        
         if request.method == 'GET':
             card_input = request.args.get('cc', '')
         else:  # POST
-            card_input = request.form.get('cc', '') or request.json.get('cc', '')
+            # Handle different content types
+            if request.is_json:
+                data = request.get_json()
+                card_input = data.get('cc', '')
+            else:
+                card_input = request.form.get('cc', '')
         
         if not card_input:
             return jsonify({
@@ -77,7 +95,8 @@ def check_card():
         return jsonify({
             'card': f"{cc}|{mes}|{ano}|{cvv}",
             'result': result,
-            'full_response': response_text
+            'full_response': response_text,
+            'status': 'success'
         })
         
     except Exception as e:
@@ -85,7 +104,12 @@ def check_card():
             'error': f'Internal server error: {str(e)}'
         }), 500
 
-# ===== CORE FUNCTIONALITY =====
+# ===== CORE FUNCTIONALITY ===== 
+# [KEEP ALL YOUR EXISTING CLASSES AND FUNCTIONS EXACTLY AS THEY ARE]
+# AccountManager, NonceExtractor, year_convert, digitt, get_bin_info, 
+# categorize_response, setup_account_and_nonce, parse_card_input, process_card
+# ... [ALL YOUR EXISTING CODE REMAINS UNCHANGED] ...
+
 class AccountManager:
     def __init__(self):
         self.session = requests.Session()
