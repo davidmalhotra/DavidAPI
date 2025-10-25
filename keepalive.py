@@ -13,6 +13,14 @@ def health_check():
     except:
         return False
 
+# Add periodic self-pinging in keepalive.py
+def self_ping():
+    try:
+        # This keeps the Render instance awake
+        requests.get('https://davidaccentapi.onrender.com/health', timeout=5)
+    except:
+        pass
+
 def run_flask_app():
     """Run the Flask application"""
     try:
