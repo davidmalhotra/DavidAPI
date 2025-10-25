@@ -1,8 +1,8 @@
 #!/bin/bash
-echo "Starting DavidAPI with keepalive system..."
+echo "Starting DavidAPI with integrated keep-alive..."
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Start the keepalive script which will manage the Flask app
-python keepalive.py
+# Start the main Flask app (keep-alive runs inside it)
+python davidapi.py
