@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 def health_check():
     """Check if the API is responding"""
     try:
-        response = requests.get('http://localhost:5000/health', timeout=10)
+        response = requests.get('http://localhost:10000/health', timeout=10)
         return response.status_code == 200
     except:
         return False
