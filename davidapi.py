@@ -7,7 +7,6 @@ import urllib3
 import warnings
 import os
 from flask import Flask, request, jsonify
-from threading import Thread
 from urllib3.exceptions import InsecureRequestWarning
 
 # Disable all SSL warnings
@@ -19,35 +18,70 @@ requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.
 
 app = Flask(__name__)
 
-# Add this for Render compatibility
+# ===== ROUTES =====
 @app.route('/')
 def home():
     return jsonify({
         'message': 'DavidAPI is running!',
-        'endpoint': 'Use /davidapi.py?cc=card|mm|yy|cvv',
+        'endpoint': 'Use /check?cc=card|mm|yy|cvv',
         'status': 'active'
     })
 
 @app.route('/health')
-def health_check():
+def health():
     return jsonify({'status': 'API is running'})
 
-# Start keep-alive in background
-def run_keep_alive():
-    """Start a simple server to keep the app alive"""
-    port = int(os.environ.get('PORT', 10000))
-    print(f"✅ Keep-alive server ready on port {port}")
+@app.route('/check', methods=['GET', 'POST'])
+def check_card():
+    global account_manager
+    
+    try:
+        # Get card data from request
+        if request.method == 'GET':
+            card_input = request.args.get('cc', '')
+        else:  # POST
+            card_input = request.form.get('cc', '') or request.json.get('cc', '')
+        
+        if not card_input:
+            return jsonify({
+                'error': 'No card data provided. Use ?cc=card_number|mm|yy|cvv format'
+            }), 400
+        
+        # Parse card input
+        parsed_card = parse_card_input(card_input)
+        if not parsed_card:
+            return jsonify({
+                'error': 'Invalid card format. Supported formats: 5213331423599035|01|2030|954, 5213331423599035|01|30|954, 5213331423599035|01/30|954, 5213331423599035|01/2030|954'
+            }), 400
+        
+        cc, mes, ano, cvv = parsed_card
+        
+        # Initialize account manager if not exists
+        if not account_manager:
+            account_manager = setup_account_and_nonce()
+            if not account_manager:
+                return jsonify({
+                    'error': 'Failed to initialize payment gateway'
+                }), 500
+        
+        # Process the card
+        result = process_card(account_manager, cc, mes, ano, cvv)
+        
+        # Format response
+        response_text = f"{cc}|{mes}|{ano}|{cvv} --> {result}"
+        
+        return jsonify({
+            'card': f"{cc}|{mes}|{ano}|{cvv}",
+            'result': result,
+            'full_response': response_text
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Internal server error: {str(e)}'
+        }), 500
 
-def start_keep_alive():
-    """Start keep-alive in background thread"""
-    t = Thread(target=run_keep_alive)
-    t.daemon = True
-    t.start()
-    print("✅ Keep-alive system activated")
-
-# Start keep-alive immediately
-start_keep_alive()
-
+# ===== CORE FUNCTIONALITY =====
 class AccountManager:
     def __init__(self):
         self.session = requests.Session()
@@ -518,60 +552,6 @@ def process_card(account_manager, cc, mes, ano, cvv):
 # Global account manager instance
 account_manager = None
 
-@app.route('/davidapi.py', methods=['GET', 'POST'])
-def api_check_card():
-    global account_manager
-    
-    try:
-        # Get card data from request
-        if request.method == 'GET':
-            card_input = request.args.get('cc', '')
-        else:  # POST
-            card_input = request.form.get('cc', '') or request.json.get('cc', '')
-        
-        if not card_input:
-            return jsonify({
-                'error': 'No card data provided. Use ?cc=card_number|mm|yy|cvv format'
-            }), 400
-        
-        # Parse card input
-        parsed_card = parse_card_input(card_input)
-        if not parsed_card:
-            return jsonify({
-                'error': 'Invalid card format. Supported formats: 5213331423599035|01|2030|954, 5213331423599035|01|30|954, 5213331423599035|01/30|954, 5213331423599035|01/2030|954'
-            }), 400
-        
-        cc, mes, ano, cvv = parsed_card
-        
-        # Initialize account manager if not exists
-        if not account_manager:
-            account_manager = setup_account_and_nonce()
-            if not account_manager:
-                return jsonify({
-                    'error': 'Failed to initialize payment gateway'
-                }), 500
-        
-        # Process the card
-        result = process_card(account_manager, cc, mes, ano, cvv)
-        
-        # Format response
-        response_text = f"{cc}|{mes}|{ano}|{cvv} --> {result}"
-        
-        return jsonify({
-            'card': f"{cc}|{mes}|{ano}|{cvv}",
-            'result': result,
-            'full_response': response_text
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'error': f'Internal server error: {str(e)}'
-        }), 500
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    return jsonify({'status': 'API is running'})
-
 if __name__ == '__main__':
     # Initialize account manager on startup
     account_manager = setup_account_and_nonce()
@@ -580,7 +560,7 @@ if __name__ == '__main__':
     else:
         print("⚠️ Failed to initialize account manager - will retry on first request")
     
-    # Get port from environment variable (for Render) - THIS IS CRITICAL
+    # Get port from environment variable (for Render)
     port = int(os.environ.get('PORT', 10000))
-    print(f"🚀 Starting Flask app on port {port}")
+    print(f"🚀 Starting DavidAPI on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
