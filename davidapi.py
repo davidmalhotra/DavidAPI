@@ -7,6 +7,7 @@ import urllib3
 import warnings
 import os
 from flask import Flask, request, jsonify
+from flask_cors import CORS, cross_origin
 from urllib3.exceptions import InsecureRequestWarning
 
 # Disable all SSL warnings
@@ -17,6 +18,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
+
+# Enable CORS for all routes and origins
+CORS(app)
 
 # ===== ROUTES =====
 @app.route('/')
