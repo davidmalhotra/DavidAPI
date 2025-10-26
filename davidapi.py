@@ -229,9 +229,8 @@ def digitt():
             continue
         return code
 
-def get_bin_info(bin):
-    bin = str(bin)[:6]
-    
+def get_bin_info_from_binlist(bin):
+    """Get bin info from binlist.net"""
     headers = {
         'Accept': 'application/json',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
@@ -242,21 +241,191 @@ def get_bin_info(bin):
         if response.status_code != 200:
             return {
                 'country': 'Unknown',
-                'bank': 'Unknown'
+                'bank': 'Unknown',
+                'brand': 'Unknown',
+                'type': 'Unknown'
             }
         
         data = response.json()
         
         return {
             'country': data.get('country', {}).get('name', 'Unknown'),
-            'bank': data.get('bank', {}).get('name', 'Unknown')
+            'bank': data.get('bank', {}).get('name', 'Unknown'),
+            'brand': data.get('scheme', 'Unknown'),
+            'type': data.get('type', 'Unknown')
         }
         
     except:
         return {
             'country': 'Unknown',
-            'bank': 'Unknown'
+            'bank': 'Unknown',
+            'brand': 'Unknown',
+            'type': 'Unknown'
         }
+
+def get_bin_info_from_antipublic(bin):
+    """Get bin info from antipublic.cc API"""
+    headers = {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
+    }
+    
+    try:
+        response = requests.get(f"https://bins.antipublic.cc/bins/{bin}", headers=headers, timeout=5, verify=False)
+        if response.status_code != 200:
+            return {
+                'country': 'Unknown',
+                'bank': 'Unknown',
+                'brand': 'Unknown',
+                'type': 'Unknown'
+            }
+        
+        data = response.json()
+        
+        return {
+            'country': data.get('country_name', 'Unknown'),
+            'bank': data.get('bank', 'Unknown'),
+            'brand': data.get('brand', 'Unknown'),
+            'type': data.get('type', 'Unknown')
+        }
+        
+    except:
+        return {
+            'country': 'Unknown',
+            'bank': 'Unknown',
+            'brand': 'Unknown',
+            'type': 'Unknown'
+        }
+
+def get_bin_info_from_bincheck(bin):
+    """Get bin info from bincheck.io"""
+    headers = {
+        'Referer': f'https://bincheck.io/details/{bin}',
+        'Upgrade-Insecure-Requests': '1',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+        'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v"138"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+    }
+    
+    try:
+        response = requests.get(f"https://bincheck.io/details/{bin}", headers=headers, timeout=5, verify=False)
+        if response.status_code != 200:
+            return {
+                'country': 'Unknown',
+                'bank': 'Unknown',
+                'brand': 'Unknown',
+                'type': 'Unknown'
+            }
+        
+        html = response.text
+        
+        # Extract information from meta description
+        pattern = r'<meta name="description" content="This number: \d+ is a valid BIN number (\w+) issued by ([^in]+) in ([^"]+)">'
+        match = re.search(pattern, html)
+        
+        if match:
+            brand = match.group(1)
+            bank = match.group(2)
+            country = match.group(3)
+            
+            return {
+                'country': country.strip(),
+                'bank': bank.strip(),
+                'brand': brand.strip(),
+                'type': 'Unknown'
+            }
+        
+        # Alternative pattern matching
+        country_match = re.search(r'<td[^>]*>Country</td>\s*<td[^>]*>([^<]+)</td>', html, re.IGNORECASE)
+        country = country_match.group(1) if country_match else 'Unknown'
+        
+        bank_match = re.search(r'<td[^>]*>Bank</td>\s*<td[^>]*>([^<]+)</td>', html, re.IGNORECASE)
+        bank = bank_match.group(1) if bank_match else 'Unknown'
+        
+        brand_match = re.search(r'<td[^>]*>Scheme</td>\s*<td[^>]*>([^<]+)</td>', html, re.IGNORECASE)
+        brand = brand_match.group(1) if brand_match else 'Unknown'
+        
+        type_match = re.search(r'<td[^>]*>Type</td>\s*<td[^>]*>([^<]+)</td>', html, re.IGNORECASE)
+        card_type = type_match.group(1) if type_match else 'Unknown'
+        
+        return {
+            'country': country.strip(),
+            'bank': bank.strip(),
+            'brand': brand.strip(),
+            'type': card_type.strip()
+        }
+        
+    except:
+        return {
+            'country': 'Unknown',
+            'bank': 'Unknown',
+            'brand': 'Unknown',
+            'type': 'Unknown'
+        }
+
+def get_bin_info(bin):
+    """Get comprehensive bin info with fallback sources"""
+    bin = str(bin)[:6]
+    
+    # Try multiple bin lookup sources with fallbacks
+    sources = [
+        'antipublic',  # Primary source - most reliable
+        'binlist',     # Secondary source
+        'bincheck'     # Tertiary source
+    ]
+    
+    for source in sources:
+        result = {}
+        
+        if source == 'antipublic':
+            result = get_bin_info_from_antipublic(bin)
+        elif source == 'binlist':
+            result = get_bin_info_from_binlist(bin)
+        elif source == 'bincheck':
+            result = get_bin_info_from_bincheck(bin)
+        
+        # If we got valid data from any source, return it
+        if (result['country'] != 'Unknown' and result['bank'] != 'Unknown' and 
+            result['brand'] != 'Unknown'):
+            return result
+        
+        # Small delay between requests to avoid rate limiting
+        time.sleep(0.1)
+    
+    # Final fallback if all sources fail
+    return {
+        'country': 'Unknown',
+        'bank': 'Unknown',
+        'brand': 'Unknown',
+        'type': 'Unknown'
+    }
+
+def format_scheme(scheme):
+    """Format card scheme name properly"""
+    scheme = scheme.lower().strip()
+    
+    mapping = {
+        'visa': 'VISA',
+        'mastercard': 'MasterCard',
+        'mc': 'MasterCard',
+        'master card': 'MasterCard',
+        'amex': 'American Express',
+        'american express': 'American Express',
+        'americanexpress': 'American Express',
+        'discover': 'Discover',
+        'jcb': 'JCB',
+        'diners': 'Diners Club',
+        'diners club': 'Diners Club',
+        'unionpay': 'UnionPay',
+        'union pay': 'UnionPay',
+        'maestro': 'Maestro',
+        'elo': 'Elo',
+        'hiper': 'Hiper',
+        'hipercard': 'Hipercard'
+    }
+    
+    return mapping.get(scheme, scheme.upper())
 
 def categorize_response(response_text):
     response = response_text.lower()
@@ -370,9 +539,12 @@ def process_card(account_manager, cc, mes, ano, cvv):
     """Process a single card through the Stripe API - FIXED VERSION"""
     ano1 = year_convert(ano)
     
+    # Get comprehensive BIN info
     bin_info = get_bin_info(cc[:6])
     bank = bin_info['bank']
     country = bin_info['country']
+    brand = format_scheme(bin_info['brand'])
+    card_type = bin_info['type']
     
     try:
         # FIXED: Proper Stripe headers from working script
@@ -449,7 +621,7 @@ def process_card(account_manager, cc, mes, ano, cvv):
         
         time.sleep(8)
         
-        # FIXED: Proper setup intent headers
+        # Status: Proper setup intent headers
         setup_headers = {
             'authority': 'lolaandveranda.com',
             'accept': '*/*',
@@ -489,7 +661,7 @@ def process_card(account_manager, cc, mes, ano, cvv):
                 if result.get('data', {}).get('status') == 'succeeded':
                     status_msg = f"{digitt()} Approved: Card Authorized Successfully"
                     category, emoji = categorize_response(status_msg)
-                    return f"{status_msg} - {category} {emoji} | {bank} - {country}"
+                    return f"{status_msg} - {category} {emoji} | {brand} - {bank} - {country} - {card_type}"
                 else:
                     error_data = result.get('data', {})
                     if 'error' in error_data:
@@ -497,7 +669,7 @@ def process_card(account_manager, cc, mes, ano, cvv):
                     else:
                         error_msg = 'Unknown success response'
                     category, emoji = categorize_response(error_msg)
-                    return f"Unknown: {error_msg} - {category} {emoji} | {bank} - {country}"
+                    return f"Unknown: {error_msg} - {category} {emoji} | {brand} - {bank} - {country} - {card_type}"
             else:
                 error_data = result.get('data', {})
                 if 'error' in error_data:
@@ -505,16 +677,16 @@ def process_card(account_manager, cc, mes, ano, cvv):
                 else:
                     error_msg = result.get('data', 'Unknown error')
                 category, emoji = categorize_response(error_msg)
-                return f"Declined: {error_msg} - {category} {emoji} | {bank} - {country}"
+                return f"Declined: {error_msg} - {category} {emoji} | {brand} - {bank} - {country} - {card_type}"
         else:
             error_msg = f"HTTP Error: {response.status_code}"
             category, emoji = categorize_response(error_msg)
-            return f"{error_msg} - {category} {emoji} | {bank} - {country}"
+            return f"{error_msg} - {category} {emoji} | {brand} - {bank} - {country} - {card_type}"
             
     except Exception as e:
         error_msg = f"Error: {str(e)}"
         category, emoji = categorize_response(error_msg)
-        return f"{error_msg} - {category} {emoji} | {bank} - {country}"
+        return f"{error_msg} - {category} {emoji} | {brand} - {bank} - {country} - {card_type}"
 
 # ===== ROUTES =====
 @app.route('/')
